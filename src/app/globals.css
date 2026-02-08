@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0b0d0f;
+  --foreground: #e4e4e7;
+  --surface: #141619;
+  --surface-hover: #1c1f23;
+  --border: #27292d;
+  --muted: #71717a;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --danger: #ef4444;
+  --success: #22c55e;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* Markdown content styling */
+.prose-forum {
+  @apply leading-relaxed;
+}
+.prose-forum p {
+  @apply mb-3;
+}
+.prose-forum h1, .prose-forum h2, .prose-forum h3 {
+  @apply font-semibold mt-4 mb-2;
+}
+.prose-forum h1 { @apply text-xl; }
+.prose-forum h2 { @apply text-lg; }
+.prose-forum h3 { @apply text-base; }
+.prose-forum code {
+  @apply bg-[var(--surface)] px-1.5 py-0.5 rounded text-sm font-mono text-indigo-300;
+}
+.prose-forum pre {
+  @apply bg-[var(--surface)] p-4 rounded-lg my-3 overflow-x-auto;
+}
+.prose-forum pre code {
+  @apply bg-transparent p-0;
+}
+.prose-forum blockquote {
+  @apply border-l-2 border-[var(--accent)] pl-4 my-3 text-[var(--muted)] italic;
+}
+.prose-forum ul {
+  @apply list-disc pl-6 mb-3;
+}
+.prose-forum ol {
+  @apply list-decimal pl-6 mb-3;
+}
+.prose-forum a {
+  @apply text-[var(--accent)] hover:text-[var(--accent-hover)] underline;
+}
+.prose-forum img {
+  @apply rounded-lg max-w-full;
+}
+.prose-forum hr {
+  @apply border-[var(--border)] my-4;
+}
+.prose-forum table {
+  @apply w-full border-collapse my-3;
+}
+.prose-forum th, .prose-forum td {
+  @apply border border-[var(--border)] px-3 py-2 text-left;
+}
+.prose-forum th {
+  @apply bg-[var(--surface)] font-semibold;
+}
