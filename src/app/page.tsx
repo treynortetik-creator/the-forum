@@ -1,101 +1,173 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useAuth } from "@/lib/auth-context";
+import { useRouter } from "next/navigation";
+import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
+
+interface ThreadAuthor {
+  id: string;
+  name: string;
+  type: string;
+  avatar_url: string | null;
+}
+
+interface Thread {
+  id: string;
+  title: string;
+  category: string;
+  author_id: string;
+  pinned: boolean;
+  last_activity: string;
+  created_at: string;
+  author: ThreadAuthor;
+  post_count: number;
+  has_unread: boolean;
+}
+
+function timeAgo(dateStr: string): string {
+  const now = new Date();
+  const date = new Date(dateStr);
+  const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
+}
+
+function categoryColor(cat: string): string {
+  const colors: Record<string, string> = {
+    general: "bg-blue-500/20 text-blue-400",
+    projects: "bg-emerald-500/20 text-emerald-400",
+    philosophy: "bg-purple-500/20 text-purple-400",
+    chronicle: "bg-amber-500/20 text-amber-400",
+    random: "bg-pink-500/20 text-pink-400",
+  };
+  return colors[cat] || "bg-gray-500/20 text-gray-400";
+}
+
+export default function HomePage() {
+  const { user, token, loading, logout } = useAuth();
+  const router = useRouter();
+  const [threads, setThreads] = useState<Thread[]>([]);
+  const [loadingThreads, setLoadingThreads] = useState(true);
+
+  const fetchThreads = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetch("/api/threads", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setThreads(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch threads:", err);
+    } finally {
+      setLoadingThreads(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push("/login");
+      return;
+    }
+    if (token) {
+      fetchThreads();
+    }
+  }, [loading, user, token, router, fetchThreads]);
+
+  if (loading || !user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-[var(--muted)]">Loading...</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
-
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+    <div className="min-h-screen">
+      {/* Header */}
+      <header className="border-b border-[var(--border)] sticky top-0 bg-[var(--background)]/95 backdrop-blur-sm z-10">
+        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
+          <h1 className="text-lg font-bold tracking-tight">The Forum</h1>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-[var(--muted)]">{user.name}</span>
+            <button
+              onClick={logout}
+              className="text-xs text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
+      </header>
+
+      {/* Main content */}
+      <main className="max-w-3xl mx-auto px-4 py-6">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-semibold">Threads</h2>
+          <Link
+            href="/threads/new"
+            className="px-4 py-2 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            New Thread
+          </Link>
+        </div>
+
+        {loadingThreads ? (
+          <div className="text-center py-12 text-[var(--muted)]">Loading threads...</div>
+        ) : threads.length === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-[var(--muted)]">No threads yet. Start a conversation!</p>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {threads.map((thread) => (
+              <Link
+                key={thread.id}
+                href={`/threads/${thread.id}`}
+                className="block p-4 rounded-lg hover:bg-[var(--surface-hover)] transition-colors group"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      {thread.pinned && (
+                        <span className="text-[var(--accent)] text-xs font-medium">📌</span>
+                      )}
+                      {thread.has_unread && (
+                        <span className="w-2 h-2 rounded-full bg-[var(--accent)] flex-shrink-0" />
+                      )}
+                      <h3 className="font-medium truncate group-hover:text-[var(--accent-hover)] transition-colors">
+                        {thread.title}
+                      </h3>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+                      <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${categoryColor(thread.category)}`}>
+                        {thread.category}
+                      </span>
+                      <span>by {thread.author.name}</span>
+                      <span>·</span>
+                      <span>{thread.post_count} {thread.post_count === 1 ? "post" : "posts"}</span>
+                    </div>
+                  </div>
+                  <span className="text-xs text-[var(--muted)] whitespace-nowrap flex-shrink-0 pt-1">
+                    {timeAgo(thread.last_activity)}
+                  </span>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
       </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
     </div>
   );
 }
