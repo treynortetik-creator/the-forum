@@ -1,7 +1,28 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateRequest, extractMentions } from "@/lib/auth";
-import { createServiceClient } from "@/lib/supabase/server";
+import { query, queryOne, queryAll } from "@/lib/db";
+
+interface ThreadRow {
+  id: string;
+  title: string;
+  category: string;
+  author_id: string;
+  pinned: boolean;
+  last_activity: string;
+  created_at: string;
+  author: { id: string; name: string; type: string; avatar_url: string | null };
+}
+
+interface PostCountRow {
+  thread_id: string;
+  count: string;
+}
+
+interface ReadMarkerRow {
+  thread_id: string;
+  last_read_at: string;
+}
 
 // GET /api/threads — List all threads with author and post count
 export async function GET(req: NextRequest) {
@@ -10,59 +31,57 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const supabase = createServiceClient();
   const category = req.nextUrl.searchParams.get("category");
 
-  let query = supabase
-    .from("threads")
-    .select("*, author:users!author_id(id, name, type, avatar_url)")
-    .order("pinned", { ascending: false })
-    .order("last_activity", { ascending: false });
+  let threads: ThreadRow[];
 
   if (category) {
-    query = query.eq("category", category);
+    threads = await queryAll<ThreadRow>(
+      `SELECT t.*,
+        json_build_object('id', u.id, 'name', u.name, 'type', u.type, 'avatar_url', u.avatar_url) as author
+      FROM threads t
+      JOIN users u ON u.id = t.author_id
+      WHERE t.category = $1
+      ORDER BY t.pinned DESC, t.last_activity DESC`,
+      [category]
+    );
+  } else {
+    threads = await queryAll<ThreadRow>(
+      `SELECT t.*,
+        json_build_object('id', u.id, 'name', u.name, 'type', u.type, 'avatar_url', u.avatar_url) as author
+      FROM threads t
+      JOIN users u ON u.id = t.author_id
+      ORDER BY t.pinned DESC, t.last_activity DESC`
+    );
   }
 
-  const { data: threads, error } = await query;
+  const threadIds = threads.map((t) => t.id);
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (threadIds.length === 0) {
+    return NextResponse.json([]);
   }
 
-  // Get post counts and unread counts for each thread
-  const threadIds = (threads || []).map((t) => t.id);
-
-  const { data: postCounts } = await supabase.rpc("get_post_counts", {
-    thread_ids: threadIds,
-  });
+  // Get post counts
+  const postCounts = await queryAll<PostCountRow>(
+    `SELECT thread_id, COUNT(*) as count FROM posts WHERE thread_id = ANY($1) GROUP BY thread_id`,
+    [threadIds]
+  );
+  const countMap = new Map(postCounts.map((c) => [c.thread_id, parseInt(c.count)]));
 
   // Get read markers for current user
-  const { data: readMarkers } = await supabase
-    .from("read_markers")
-    .select("*")
-    .eq("user_id", auth.user.id)
-    .in("thread_id", threadIds);
-
-  const readMap = new Map(
-    (readMarkers || []).map((m) => [m.thread_id, m.last_read_at])
+  const readMarkers = await queryAll<ReadMarkerRow>(
+    `SELECT thread_id, last_read_at FROM read_markers WHERE user_id = $1 AND thread_id = ANY($2)`,
+    [auth.user.id, threadIds]
   );
-  const countMap = new Map(
-    (postCounts || []).map((c: { thread_id: string; count: number }) => [
-      c.thread_id,
-      c.count,
-    ])
-  );
+  const readMap = new Map(readMarkers.map((m) => [m.thread_id, m.last_read_at]));
 
-  const enriched = (threads || []).map((thread) => {
-    const postCount = countMap.get(thread.id) || 0;
-    return {
-      ...thread,
-      post_count: postCount,
-      has_unread: readMap.has(thread.id)
-        ? new Date(thread.last_activity) > new Date(readMap.get(thread.id)!)
-        : true,
-    };
-  });
+  const enriched = threads.map((thread) => ({
+    ...thread,
+    post_count: countMap.get(thread.id) || 0,
+    has_unread: readMap.has(thread.id)
+      ? new Date(thread.last_activity) > new Date(readMap.get(thread.id)!)
+      : true,
+  }));
 
   return NextResponse.json(enriched);
 }
@@ -83,57 +102,44 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const validCategories = [
-    "general",
-    "projects",
-    "philosophy",
-    "chronicle",
-    "random",
-  ];
+  const validCategories = ["general", "projects", "philosophy", "chronicle", "random"];
   if (category && !validCategories.includes(category)) {
     return NextResponse.json({ error: "Invalid category" }, { status: 400 });
   }
 
-  const supabase = createServiceClient();
-
   // Create thread
-  const { data: thread, error: threadError } = await supabase
-    .from("threads")
-    .insert({
-      title,
-      category: category || "general",
-      author_id: auth.user.id,
-    })
-    .select()
-    .single();
+  const thread = await queryOne<ThreadRow>(
+    `INSERT INTO threads (title, category, author_id) VALUES ($1, $2, $3) RETURNING *`,
+    [title, category || "general", auth.user.id]
+  );
 
-  if (threadError) {
-    return NextResponse.json({ error: threadError.message }, { status: 500 });
+  if (!thread) {
+    return NextResponse.json({ error: "Failed to create thread" }, { status: 500 });
   }
 
   // Create first post
   const mentions = extractMentions(body);
-  const { data: post, error: postError } = await supabase
-    .from("posts")
-    .insert({
-      thread_id: thread.id,
-      author_id: auth.user.id,
-      body,
-      mentions,
-    })
-    .select("*, author:users!author_id(id, name, type, avatar_url)")
-    .single();
+  const post = await queryOne(
+    `INSERT INTO posts (thread_id, author_id, body, mentions) VALUES ($1, $2, $3, $4) RETURNING *`,
+    [thread.id, auth.user.id, body, mentions]
+  );
 
-  if (postError) {
-    return NextResponse.json({ error: postError.message }, { status: 500 });
-  }
+  // Get author info for the post
+  const authorInfo = await queryOne(
+    `SELECT id, name, type, avatar_url FROM users WHERE id = $1`,
+    [auth.user.id]
+  );
 
   // Mark as read for the creator
-  await supabase.from("read_markers").upsert({
-    user_id: auth.user.id,
-    thread_id: thread.id,
-    last_read_at: new Date().toISOString(),
-  });
+  await query(
+    `INSERT INTO read_markers (user_id, thread_id, last_read_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (user_id, thread_id) DO UPDATE SET last_read_at = NOW()`,
+    [auth.user.id, thread.id]
+  );
 
-  return NextResponse.json({ ...thread, posts: [post] }, { status: 201 });
+  return NextResponse.json(
+    { ...thread, posts: [{ ...post, author: authorInfo }] },
+    { status: 201 }
+  );
 }

@@ -1,8 +1,9 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/server";
+import bcrypt from "bcryptjs";
+import { queryOne } from "@/lib/db";
 
-// POST /api/auth/login — Human login via Supabase Auth
+// POST /api/auth/login — Human login via email + password
 export async function POST(req: NextRequest) {
   const { email, password } = await req.json();
 
@@ -13,31 +14,42 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const supabase = createServiceClient();
+  // Find user by email
+  const user = await queryOne<{
+    id: string;
+    name: string;
+    email: string;
+    type: string;
+    avatar_url: string | null;
+    password_hash: string | null;
+    created_at: string;
+  }>(`SELECT * FROM users WHERE email = $1`, [email]);
 
-  const {
-    data: { session },
-    error,
-  } = await supabase.auth.signInWithPassword({ email, password });
-
-  if (error || !session) {
+  if (!user || !user.password_hash) {
     return NextResponse.json(
-      { error: error?.message || "Invalid credentials" },
+      { error: "Invalid credentials" },
       { status: 401 }
     );
   }
 
-  // Get forum user profile
-  const { data: user } = await supabase
-    .from("users")
-    .select("*")
-    .eq("auth_id", session.user.id)
-    .single();
+  const valid = await bcrypt.compare(password, user.password_hash);
+  if (!valid) {
+    return NextResponse.json(
+      { error: "Invalid credentials" },
+      { status: 401 }
+    );
+  }
 
+  // Return user info with their ID as the access token (simple session)
   return NextResponse.json({
-    user,
-    access_token: session.access_token,
-    refresh_token: session.refresh_token,
-    expires_at: session.expires_at,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      type: user.type,
+      avatar_url: user.avatar_url,
+      created_at: user.created_at,
+    },
+    access_token: user.id, // Simple token: user's UUID
   });
 }

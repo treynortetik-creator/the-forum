@@ -1,11 +1,34 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth";
-import { createServiceClient } from "@/lib/supabase/server";
+import { query, queryAll } from "@/lib/db";
 import { DigestResponse, Post } from "@/lib/types";
 
 const TOKEN_BUDGET = 2000;
 const RECENT_POST_COUNT = 5;
+
+interface ReadMarkerRow {
+  user_id: string;
+  thread_id: string;
+  last_read_at: string;
+}
+
+interface PostRow {
+  id: string;
+  thread_id: string;
+  author_id: string;
+  body: string;
+  reply_to_id: string | null;
+  mentions: string[];
+  created_at: string;
+  author: { id: string; name: string; type: string; avatar_url: string | null };
+}
+
+interface ThreadSummaryRow {
+  id: string;
+  title: string;
+  category: string;
+}
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -19,7 +42,6 @@ function formatPostForDigest(post: Post): string {
 async function summarizePosts(posts: Post[]): Promise<string> {
   const text = posts.map(formatPostForDigest).join("\n\n");
 
-  // If OpenAI key is available, use it for summarization
   if (process.env.OPENAI_API_KEY) {
     try {
       const { default: OpenAI } = await import("openai");
@@ -42,7 +64,6 @@ async function summarizePosts(posts: Post[]): Promise<string> {
     }
   }
 
-  // Fallback: truncate
   const maxChars = TOKEN_BUDGET * 4;
   if (text.length > maxChars) {
     return text.slice(0, maxChars) + "\n\n[...truncated]";
@@ -57,74 +78,88 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const supabase = createServiceClient();
   const searchParams = req.nextUrl.searchParams;
   const threadFilter = searchParams.get("thread");
   const fullMode = searchParams.get("full") === "true";
   const limit = parseInt(searchParams.get("limit") || "0") || 0;
 
-  // Get user's last global read time from read_markers
-  const { data: markers } = await supabase
-    .from("read_markers")
-    .select("*")
-    .eq("user_id", auth.user.id);
+  // Get user's read markers
+  const markers = await queryAll<ReadMarkerRow>(
+    `SELECT * FROM read_markers WHERE user_id = $1`,
+    [auth.user.id]
+  );
 
-  // Build posts query — get unread posts
-  let postsQuery = supabase
-    .from("posts")
-    .select("*, author:users!author_id(id, name, type, avatar_url)")
-    .order("created_at", { ascending: true });
+  // Build posts query
+  let postsSQL: string;
+  let postsParams: unknown[];
 
   if (threadFilter) {
-    postsQuery = postsQuery.eq("thread_id", threadFilter);
-
-    // Filter by that thread's read marker
-    const threadMarker = (markers || []).find(
-      (m) => m.thread_id === threadFilter
-    );
+    const threadMarker = markers.find((m) => m.thread_id === threadFilter);
     if (threadMarker) {
-      postsQuery = postsQuery.gt("created_at", threadMarker.last_read_at);
+      postsSQL = `
+        SELECT p.*,
+          json_build_object('id', u.id, 'name', u.name, 'type', u.type, 'avatar_url', u.avatar_url) as author
+        FROM posts p
+        JOIN users u ON u.id = p.author_id
+        WHERE p.thread_id = $1 AND p.created_at > $2
+        ORDER BY p.created_at ASC
+      `;
+      postsParams = [threadFilter, threadMarker.last_read_at];
+    } else {
+      postsSQL = `
+        SELECT p.*,
+          json_build_object('id', u.id, 'name', u.name, 'type', u.type, 'avatar_url', u.avatar_url) as author
+        FROM posts p
+        JOIN users u ON u.id = p.author_id
+        WHERE p.thread_id = $1
+        ORDER BY p.created_at ASC
+      `;
+      postsParams = [threadFilter];
     }
   } else {
-    // Get posts from all threads that are newer than their respective read markers
-    // If no marker exists for a thread, include all its posts
-    // We'll filter in-memory since we need per-thread markers
+    postsSQL = `
+      SELECT p.*,
+        json_build_object('id', u.id, 'name', u.name, 'type', u.type, 'avatar_url', u.avatar_url) as author
+      FROM posts p
+      JOIN users u ON u.id = p.author_id
+      ORDER BY p.created_at ASC
+    `;
+    postsParams = [];
   }
 
   if (limit > 0) {
-    postsQuery = postsQuery.limit(limit);
+    postsSQL += ` LIMIT ${limit}`;
   }
 
-  const { data: allPosts, error } = await postsQuery;
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  const allPosts = await queryAll<PostRow>(postsSQL, postsParams);
 
   // Filter unread posts per-thread if no specific thread filter
-  let unreadPosts = allPosts || [];
-  if (!threadFilter && markers && markers.length > 0) {
+  let unreadPosts: PostRow[] = allPosts;
+  if (!threadFilter && markers.length > 0) {
     const markerMap = new Map(
       markers.map((m) => [m.thread_id, m.last_read_at])
     );
     unreadPosts = unreadPosts.filter((post) => {
       const marker = markerMap.get(post.thread_id);
-      if (!marker) return true; // no marker = never read = all unread
+      if (!marker) return true;
       return new Date(post.created_at) > new Date(marker);
     });
   }
 
   const totalTokens = unreadPosts.reduce(
-    (sum, p) => sum + estimateTokens(formatPostForDigest(p as Post)),
+    (sum, p) => sum + estimateTokens(formatPostForDigest(p as unknown as Post)),
     0
   );
 
   // Get unique threads
   const threadIds = [...new Set(unreadPosts.map((p) => p.thread_id))];
-  const { data: threads } = await supabase
-    .from("threads")
-    .select("id, title, category")
-    .in("id", threadIds.length > 0 ? threadIds : ["none"]);
+  const threads =
+    threadIds.length > 0
+      ? await queryAll<ThreadSummaryRow>(
+          `SELECT id, title, category FROM threads WHERE id = ANY($1)`,
+          [threadIds]
+        )
+      : [];
 
   // If under budget or full mode, return everything
   if (fullMode || totalTokens <= TOKEN_BUDGET) {
@@ -132,17 +167,15 @@ export async function GET(req: NextRequest) {
       unread_count: unreadPosts.length,
       token_estimate: totalTokens,
       truncated: false,
-      posts: unreadPosts as Post[],
-      threads: threads || [],
+      posts: unreadPosts as unknown as Post[],
+      threads,
     };
 
-    // Update read markers
-    await updateReadMarkers(supabase, auth.user.id, unreadPosts);
-
+    await updateReadMarkers(auth.user.id, unreadPosts);
     return NextResponse.json(response);
   }
 
-  // Over budget: split into mentioned posts, recent posts, and older posts to summarize
+  // Over budget: split
   const userName = auth.user.name;
   const mentionedPosts = unreadPosts.filter(
     (p) => p.mentions && p.mentions.includes(userName)
@@ -151,17 +184,14 @@ export async function GET(req: NextRequest) {
     (p) => !p.mentions || !p.mentions.includes(userName)
   );
 
-  // Take the most recent posts in full
   const recentPosts = nonMentionedPosts.slice(-RECENT_POST_COUNT);
   const olderPosts = nonMentionedPosts.slice(0, -RECENT_POST_COUNT);
 
-  // Summarize older posts
   let summary: string | undefined;
   if (olderPosts.length > 0) {
-    summary = await summarizePosts(olderPosts as Post[]);
+    summary = await summarizePosts(olderPosts as unknown as Post[]);
   }
 
-  // Combine: mentioned posts always in full + recent posts in full
   const fullPosts = [...mentionedPosts, ...recentPosts];
 
   const response: DigestResponse = {
@@ -169,22 +199,18 @@ export async function GET(req: NextRequest) {
     token_estimate: totalTokens,
     truncated: true,
     summary,
-    posts: fullPosts as Post[],
-    threads: threads || [],
+    posts: fullPosts as unknown as Post[],
+    threads,
   };
 
-  // Update read markers
-  await updateReadMarkers(supabase, auth.user.id, unreadPosts);
-
+  await updateReadMarkers(auth.user.id, unreadPosts);
   return NextResponse.json(response);
 }
 
 async function updateReadMarkers(
-  supabase: ReturnType<typeof createServiceClient>,
   userId: string,
   posts: Array<{ thread_id: string; created_at: string }>
 ) {
-  // Group by thread and get latest timestamp per thread
   const latestByThread = new Map<string, string>();
   for (const post of posts) {
     const current = latestByThread.get(post.thread_id);
@@ -193,16 +219,12 @@ async function updateReadMarkers(
     }
   }
 
-  // Upsert read markers
-  const upserts = Array.from(latestByThread.entries()).map(
-    ([threadId, lastRead]) => ({
-      user_id: userId,
-      thread_id: threadId,
-      last_read_at: lastRead,
-    })
-  );
-
-  if (upserts.length > 0) {
-    await supabase.from("read_markers").upsert(upserts);
+  for (const [threadId, lastRead] of latestByThread.entries()) {
+    await query(
+      `INSERT INTO read_markers (user_id, thread_id, last_read_at)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, thread_id) DO UPDATE SET last_read_at = $3`,
+      [userId, threadId, lastRead]
+    );
   }
 }

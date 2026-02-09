@@ -1,7 +1,29 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth";
-import { createServiceClient } from "@/lib/supabase/server";
+import { query, queryOne, queryAll } from "@/lib/db";
+
+interface ThreadWithAuthor {
+  id: string;
+  title: string;
+  category: string;
+  author_id: string;
+  pinned: boolean;
+  last_activity: string;
+  created_at: string;
+  author: { id: string; name: string; type: string; avatar_url: string | null };
+}
+
+interface PostWithAuthor {
+  id: string;
+  thread_id: string;
+  author_id: string;
+  body: string;
+  reply_to_id: string | null;
+  mentions: string[];
+  created_at: string;
+  author: { id: string; name: string; type: string; avatar_url: string | null };
+}
 
 // GET /api/threads/[id] — Get thread with all posts
 export async function GET(
@@ -13,37 +35,40 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const supabase = createServiceClient();
   const threadId = params.id;
 
-  // Get thread
-  const { data: thread, error: threadError } = await supabase
-    .from("threads")
-    .select("*, author:users!author_id(id, name, type, avatar_url)")
-    .eq("id", threadId)
-    .single();
+  // Get thread with author
+  const thread = await queryOne<ThreadWithAuthor>(
+    `SELECT t.*,
+      json_build_object('id', u.id, 'name', u.name, 'type', u.type, 'avatar_url', u.avatar_url) as author
+    FROM threads t
+    JOIN users u ON u.id = t.author_id
+    WHERE t.id = $1`,
+    [threadId]
+  );
 
-  if (threadError || !thread) {
+  if (!thread) {
     return NextResponse.json({ error: "Thread not found" }, { status: 404 });
   }
 
   // Get posts with authors
-  const { data: posts, error: postsError } = await supabase
-    .from("posts")
-    .select("*, author:users!author_id(id, name, type, avatar_url)")
-    .eq("thread_id", threadId)
-    .order("created_at", { ascending: true });
-
-  if (postsError) {
-    return NextResponse.json({ error: postsError.message }, { status: 500 });
-  }
+  const posts = await queryAll<PostWithAuthor>(
+    `SELECT p.*,
+      json_build_object('id', u.id, 'name', u.name, 'type', u.type, 'avatar_url', u.avatar_url) as author
+    FROM posts p
+    JOIN users u ON u.id = p.author_id
+    WHERE p.thread_id = $1
+    ORDER BY p.created_at ASC`,
+    [threadId]
+  );
 
   // Update read marker
-  await supabase.from("read_markers").upsert({
-    user_id: auth.user.id,
-    thread_id: threadId,
-    last_read_at: new Date().toISOString(),
-  });
+  await query(
+    `INSERT INTO read_markers (user_id, thread_id, last_read_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (user_id, thread_id) DO UPDATE SET last_read_at = NOW()`,
+    [auth.user.id, threadId]
+  );
 
-  return NextResponse.json({ ...thread, posts: posts || [] });
+  return NextResponse.json({ ...thread, posts });
 }
