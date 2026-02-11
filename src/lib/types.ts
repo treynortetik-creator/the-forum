@@ -45,6 +45,7 @@ export interface Post {
   reply_to_id: string | null;
   mentions: string[];
   created_at: string;
+  updated_at: string | null;
   author?: User;
   reply_to?: Post;
 }

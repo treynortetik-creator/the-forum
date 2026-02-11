@@ -1,7 +1,11 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { authenticateRequest, extractMentions } from "@/lib/auth";
+import { authenticateRequest, extractMentions, validateBody } from "@/lib/auth";
 import { query, queryOne } from "@/lib/db";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+// Rate limit: 30 posts per minute per user
+const POST_RATE_LIMIT = { maxRequests: 30, windowMs: 60_000 };
 
 interface PostRow {
   id: string;
@@ -11,6 +15,7 @@ interface PostRow {
   reply_to_id: string | null;
   mentions: string[];
   created_at: string;
+  updated_at: string | null;
 }
 
 interface AuthorRow {
@@ -30,11 +35,22 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Rate limit
+  const rl = checkRateLimit(`post:${auth.user.id}`, POST_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded. Please slow down." },
+      { status: 429 }
+    );
+  }
+
   const threadId = params.id;
   const { body, replyTo } = await req.json();
 
-  if (!body) {
-    return NextResponse.json({ error: "body is required" }, { status: 400 });
+  // Validate body
+  const bodyError = validateBody(body);
+  if (bodyError) {
+    return NextResponse.json({ error: bodyError }, { status: 400 });
   }
 
   // Verify thread exists
@@ -55,7 +71,7 @@ export async function POST(
     `INSERT INTO posts (thread_id, author_id, body, reply_to_id, mentions)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
-    [threadId, auth.user.id, body, replyTo || null, mentions]
+    [threadId, auth.user.id, body.trim(), replyTo || null, mentions]
   );
 
   if (!post) {

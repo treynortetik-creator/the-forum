@@ -128,7 +128,8 @@ export async function GET(req: NextRequest) {
   }
 
   if (limit > 0) {
-    postsSQL += ` LIMIT ${limit}`;
+    postsParams.push(limit);
+    postsSQL += ` LIMIT $${postsParams.length}`;
   }
 
   const allPosts = await queryAll<PostRow>(postsSQL, postsParams);

@@ -2,9 +2,28 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { queryOne } from "@/lib/db";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+
+// Rate limit: 10 login attempts per minute per IP
+const LOGIN_RATE_LIMIT = { maxRequests: 10, windowMs: 60_000 };
 
 // POST /api/auth/login — Human login via email + password
 export async function POST(req: NextRequest) {
+  // Rate limit check
+  const ip = getClientIp(req);
+  const rl = checkRateLimit(`login:${ip}`, LOGIN_RATE_LIMIT);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many login attempts. Please try again later." },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)),
+        },
+      }
+    );
+  }
+
   const { email, password } = await req.json();
 
   if (!email || !password) {
@@ -14,7 +33,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Find user by email
+  // Find user by email — only select needed columns
   const user = await queryOne<{
     id: string;
     name: string;
@@ -23,7 +42,10 @@ export async function POST(req: NextRequest) {
     avatar_url: string | null;
     password_hash: string | null;
     created_at: string;
-  }>(`SELECT * FROM users WHERE email = $1`, [email]);
+  }>(
+    `SELECT id, name, email, type, avatar_url, password_hash, created_at FROM users WHERE email = $1`,
+    [email]
+  );
 
   if (!user || !user.password_hash) {
     return NextResponse.json(
