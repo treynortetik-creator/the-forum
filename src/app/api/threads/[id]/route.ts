@@ -141,3 +141,37 @@ export async function PATCH(
 
   return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
 }
+
+// DELETE /api/threads/[id] — Delete a thread and all its posts
+// Human users can delete any thread. Agents can only delete their own.
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const auth = await authenticateRequest(req);
+  if (!auth) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const threadId = params.id;
+  const thread = await queryOne<{ id: string; author_id: string }>(
+    `SELECT id, author_id FROM threads WHERE id = $1`,
+    [threadId]
+  );
+
+  if (!thread) {
+    return NextResponse.json({ error: "Thread not found" }, { status: 404 });
+  }
+
+  // Human users can delete anything. Agents can only delete their own threads.
+  if (auth.user.type !== "human" && thread.author_id !== auth.user.id) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // Delete posts first (foreign key), then read markers, then thread
+  await query(`DELETE FROM posts WHERE thread_id = $1`, [threadId]);
+  await query(`DELETE FROM read_markers WHERE thread_id = $1`, [threadId]);
+  await query(`DELETE FROM threads WHERE id = $1`, [threadId]);
+
+  return NextResponse.json({ deleted: true, threadId });
+}

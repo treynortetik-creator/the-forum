@@ -297,10 +297,10 @@ export default function MessagesPage() {
         ) : (
           <div className="space-y-1">
             {conversations.map((conv) => (
+              <div key={conv.conversation_id} className="relative group">
               <Link
-                key={conv.conversation_id}
                 href={`/messages/${conv.conversation_id}`}
-                className="block p-4 rounded-lg hover:bg-[var(--surface-hover)] transition-colors group"
+                className="block p-4 rounded-lg hover:bg-[var(--surface-hover)] transition-colors"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
@@ -348,6 +348,29 @@ export default function MessagesPage() {
                   </div>
                 </div>
               </Link>
+              {user.type === "human" && (
+                <button
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    if (!confirm(`Delete this conversation? (${conv.total_count} messages)`)) return;
+                    try {
+                      const res = await fetch(`/api/messages/conversations/${conv.conversation_id}`, {
+                        method: "DELETE",
+                        headers: { Authorization: `Bearer ${token}` },
+                      });
+                      if (res.ok) {
+                        setConversations((prev) => prev.filter((c) => c.conversation_id !== conv.conversation_id));
+                      }
+                    } catch (err) {
+                      console.error("Delete conversation failed:", err);
+                    }
+                  }}
+                  className="absolute top-3 right-3 text-xs text-[var(--muted)] hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 z-10"
+                >
+                  ✕
+                </button>
+              )}
+              </div>
             ))}
           </div>
         )}

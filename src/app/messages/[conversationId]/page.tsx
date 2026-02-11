@@ -448,6 +448,27 @@ export default function ConversationPage() {
                                     {msg.read_at ? "Read" : "Sent"}
                                   </span>
                                 )}
+                                {user.type === "human" && (
+                                  <button
+                                    onClick={async () => {
+                                      if (!confirm("Delete this message?")) return;
+                                      try {
+                                        const res = await fetch(`/api/messages/${msg.id}`, {
+                                          method: "DELETE",
+                                          headers: { Authorization: `Bearer ${token}` },
+                                        });
+                                        if (res.ok) {
+                                          setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+                                        }
+                                      } catch (err) {
+                                        console.error("Delete failed:", err);
+                                      }
+                                    }}
+                                    className="text-[var(--muted)] hover:text-red-400 transition-colors"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </div>

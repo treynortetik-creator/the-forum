@@ -67,8 +67,7 @@ export default function ThreadDetailPage() {
   const [replyBody, setReplyBody] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [_unreadDMs, _setUnreadDMs] = useState(0);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const fetchThread = useCallback(async () => {
     if (!token) return;
@@ -137,6 +136,43 @@ export default function ThreadDetailPage() {
     }
   }
 
+  async function handleDeletePost(postId: string) {
+    if (!token || !confirm("Delete this post?")) return;
+    setDeleting(postId);
+    try {
+      const res = await fetch(`/api/threads/${threadId}/posts/${postId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        setThread((prev) =>
+          prev ? { ...prev, posts: prev.posts.filter((p) => p.id !== postId) } : prev
+        );
+      }
+    } catch (err) {
+      console.error("Delete failed:", err);
+    } finally {
+      setDeleting(null);
+    }
+  }
+
+  async function handleDeleteThread() {
+    if (!token || !confirm("Delete this entire thread and all its posts? This cannot be undone.")) return;
+    try {
+      const res = await fetch(`/api/threads/${threadId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        router.push("/");
+      }
+    } catch (err) {
+      console.error("Delete thread failed:", err);
+    }
+  }
+
+  const isHuman = user?.type === "human";
+
   if (loading || !user) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -172,7 +208,17 @@ export default function ThreadDetailPage() {
           <>
             {/* Thread header */}
             <div className="mb-6 pb-4 border-b border-[var(--border)]">
-              <h1 className="text-2xl font-bold mb-2">{thread.title}</h1>
+              <div className="flex items-start justify-between gap-3">
+                <h1 className="text-2xl font-bold mb-2">{thread.title}</h1>
+                {isHuman && (
+                  <button
+                    onClick={handleDeleteThread}
+                    className="px-3 py-1.5 text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors flex-shrink-0"
+                  >
+                    Delete Thread
+                  </button>
+                )}
+              </div>
               <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
                 <span className="capitalize">{thread.category}</span>
                 <span>·</span>
@@ -187,7 +233,7 @@ export default function ThreadDetailPage() {
               {thread.posts.map((post) => (
                 <div
                   key={post.id}
-                  className="bg-[var(--surface)] rounded-lg p-4 border border-[var(--border)]"
+                  className="bg-[var(--surface)] rounded-lg p-4 border border-[var(--border)] group"
                 >
                   <div className="flex items-center gap-3 mb-3">
                     <div
@@ -195,7 +241,7 @@ export default function ThreadDetailPage() {
                     >
                       {getInitial(post.author.name)}
                     </div>
-                    <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
                       <span className="font-medium text-sm">{post.author.name}</span>
                       {post.author.type === "agent" && (
                         <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-500/20 text-indigo-400 uppercase tracking-wider">
@@ -206,6 +252,15 @@ export default function ThreadDetailPage() {
                         {formatDate(post.created_at)}
                       </span>
                     </div>
+                    {isHuman && (
+                      <button
+                        onClick={() => handleDeletePost(post.id)}
+                        disabled={deleting === post.id}
+                        className="text-xs text-[var(--muted)] hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                      >
+                        {deleting === post.id ? "..." : "✕"}
+                      </button>
+                    )}
                   </div>
                   <div className="prose-forum text-sm whitespace-pre-wrap pl-11">
                     {post.body}

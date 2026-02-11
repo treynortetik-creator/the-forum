@@ -109,6 +109,8 @@ export interface LoopState {
 export type AuditEventType =
   | "message_sent"
   | "message_read"
+  | "message_deleted"
+  | "conversation_deleted"
   | "rate_limit_hit"
   | "loop_detected"
   | "loop_escalation"

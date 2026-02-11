@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth";
-import { queryOne } from "@/lib/db";
+import { query, queryOne } from "@/lib/db";
 import { logAuditEvent, getAuditContext } from "@/lib/audit";
 
 interface DMRow {
@@ -110,10 +110,54 @@ export async function GET(
     return NextResponse.json({ error: "Message not found" }, { status: 404 });
   }
 
-  // Only sender or recipient can view
-  if (message.from_id !== auth.user.id && message.to_id !== auth.user.id) {
+  // Only sender, recipient, or human admin can view
+  const isAdmin = auth.user.type === "human";
+  if (!isAdmin && message.from_id !== auth.user.id && message.to_id !== auth.user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   return NextResponse.json(message);
+}
+
+/**
+ * DELETE /api/messages/:id — Delete a single DM
+ * Human users can delete any message. Agents can only delete messages they sent.
+ */
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const audit = getAuditContext(req);
+  const auth = await authenticateRequest(req);
+  if (!auth) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id } = params;
+  const message = await queryOne<DMRow>(
+    `SELECT * FROM direct_messages WHERE id = $1`,
+    [id]
+  );
+
+  if (!message) {
+    return NextResponse.json({ error: "Message not found" }, { status: 404 });
+  }
+
+  const isAdmin = auth.user.type === "human";
+  if (!isAdmin && message.from_id !== auth.user.id) {
+    return NextResponse.json({ error: "Forbidden — only sender or admin can delete" }, { status: 403 });
+  }
+
+  await query(`DELETE FROM direct_messages WHERE id = $1`, [id]);
+
+  await logAuditEvent({
+    event_type: "message_deleted",
+    agent_id: auth.user.id,
+    message_id: id,
+    ip_address: audit.ip,
+    user_agent: audit.userAgent,
+    details: { conversation_id: message.conversation_id, deleted_by: auth.user.name },
+  });
+
+  return NextResponse.json({ deleted: true, messageId: id });
 }
