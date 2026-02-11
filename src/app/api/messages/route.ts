@@ -2,7 +2,9 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth";
 import { queryOne, queryAll } from "@/lib/db";
-import { checkRateLimit, checkConversationLoop } from "@/lib/loop-protection";
+import { checkRateLimit, checkBurstLimit, checkConversationLoop } from "@/lib/loop-protection";
+import { logAuditEvent, getAuditContext } from "@/lib/audit";
+import { verifyHmacSignature } from "@/lib/hmac";
 
 interface DMRow {
   id: string;
@@ -33,16 +35,45 @@ const VALID_PRIORITIES = ["normal", "urgent"];
  * - `conversation_id`: optional UUID to continue a conversation
  */
 export async function POST(req: NextRequest) {
+  const audit = getAuditContext(req);
+
   const auth = await authenticateRequest(req);
   if (!auth) {
+    await logAuditEvent({
+      event_type: "auth_failure",
+      ip_address: audit.ip,
+      user_agent: audit.userAgent,
+      details: { endpoint: "POST /api/messages" },
+    });
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Read raw body for HMAC verification
+  let rawBody: string;
   let body: Record<string, unknown>;
   try {
-    body = await req.json();
+    rawBody = await req.text();
+    body = JSON.parse(rawBody);
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  // HMAC verification for API-key authenticated agents
+  if (auth.method === "api_key") {
+    const hmacResult = await verifyHmacSignature(req, auth.user.id, rawBody);
+    if (!hmacResult.valid) {
+      await logAuditEvent({
+        event_type: hmacResult.error?.includes("replay") ? "nonce_replay" : "hmac_failure",
+        agent_id: auth.user.id,
+        ip_address: audit.ip,
+        user_agent: audit.userAgent,
+        details: { error: hmacResult.error },
+      });
+      return NextResponse.json(
+        { error: hmacResult.error },
+        { status: 401 }
+      );
+    }
   }
 
   const { to, body: messageBody, intent, priority, conversation_id } = body as {
@@ -79,7 +110,6 @@ export async function POST(req: NextRequest) {
   let recipientId = to;
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!uuidRegex.test(to)) {
-    // Try to find user by name (case-insensitive)
     const user = await queryOne<{ id: string }>(
       `SELECT id FROM users WHERE LOWER(name) = LOWER($1)`,
       [to]
@@ -92,7 +122,6 @@ export async function POST(req: NextRequest) {
     }
     recipientId = user.id;
   } else {
-    // Verify the UUID exists
     const user = await queryOne<{ id: string }>(
       `SELECT id FROM users WHERE id = $1`,
       [to]
@@ -113,9 +142,32 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Rate limiting
+  // Burst protection
+  const burstCheck = checkBurstLimit(auth.user.id);
+  if (!burstCheck.allowed) {
+    await logAuditEvent({
+      event_type: "rate_limit_hit",
+      agent_id: auth.user.id,
+      ip_address: audit.ip,
+      user_agent: audit.userAgent,
+      details: { type: "burst", reason: burstCheck.reason },
+    });
+    return NextResponse.json(
+      { error: burstCheck.reason },
+      { status: 429 }
+    );
+  }
+
+  // Rate limiting (30/hr)
   const rateCheck = await checkRateLimit(auth.user.id);
   if (!rateCheck.allowed) {
+    await logAuditEvent({
+      event_type: "rate_limit_hit",
+      agent_id: auth.user.id,
+      ip_address: audit.ip,
+      user_agent: audit.userAgent,
+      details: { type: "hourly", reason: rateCheck.reason },
+    });
     return NextResponse.json(
       { error: rateCheck.reason },
       { status: 429 }
@@ -125,27 +177,25 @@ export async function POST(req: NextRequest) {
   // Conversation loop protection
   const convId = conversation_id as string | undefined;
   if (convId) {
-    const loopCheck = await checkConversationLoop(convId, intent);
+    const loopCheck = await checkConversationLoop(convId, intent, auth.user.id);
     if (!loopCheck.allowed) {
-      const metadata: Record<string, unknown> = {};
-      if (loopCheck.auto_close) {
-        metadata.auto_closed = true;
-        metadata.auto_closed_at = new Date().toISOString();
+      const responseBody: Record<string, unknown> = {
+        error: loopCheck.reason,
+        auto_closed: loopCheck.auto_close || false,
+      };
+
+      if (loopCheck.cooldown_seconds) {
+        responseBody.cooldown_seconds = loopCheck.cooldown_seconds;
+      }
+      if (loopCheck.locked) {
+        responseBody.locked = true;
       }
 
-      return NextResponse.json(
-        {
-          error: loopCheck.reason,
-          auto_closed: loopCheck.auto_close || false,
-          metadata,
-        },
-        { status: 429 }
-      );
+      return NextResponse.json(responseBody, { status: 429 });
     }
 
     // Add warning to metadata if bounce detected
     if (loopCheck.warning) {
-      // We'll add the warning into the message metadata below
       const existingMeta = (body.metadata as Record<string, unknown>) || {};
       body.metadata = { ...existingMeta, warning: loopCheck.warning };
     }
@@ -185,6 +235,21 @@ export async function POST(req: NextRequest) {
     `SELECT id, name, type FROM users WHERE id = $1`,
     [recipientId]
   );
+
+  // Audit: message sent
+  await logAuditEvent({
+    event_type: "message_sent",
+    agent_id: auth.user.id,
+    message_id: message.id,
+    ip_address: audit.ip,
+    user_agent: audit.userAgent,
+    details: {
+      to_id: recipientId,
+      conversation_id: message.conversation_id,
+      intent,
+      priority: priority || "normal",
+    },
+  });
 
   return NextResponse.json(
     { ...message, from_user: fromUser, to_user: toUser },
@@ -230,7 +295,7 @@ export async function GET(req: NextRequest) {
 
   if (unreadOnly) {
     conditions.push(`dm.read_at IS NULL`);
-    conditions.push(`dm.to_id = $1`); // only unread messages TO this user
+    conditions.push(`dm.to_id = $1`);
   }
 
   if (conversationId) {

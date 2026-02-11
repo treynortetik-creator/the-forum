@@ -57,6 +57,7 @@ export default function HomePage() {
   const router = useRouter();
   const [threads, setThreads] = useState<Thread[]>([]);
   const [loadingThreads, setLoadingThreads] = useState(true);
+  const [unreadDMs, setUnreadDMs] = useState(0);
 
   const fetchThreads = useCallback(async () => {
     if (!token) return;
@@ -75,6 +76,21 @@ export default function HomePage() {
     }
   }, [token]);
 
+  const fetchUnreadDMs = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetch("/api/messages/unread", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUnreadDMs(data.total);
+      }
+    } catch {
+      // silently fail
+    }
+  }, [token]);
+
   useEffect(() => {
     if (!loading && !user) {
       router.push("/login");
@@ -82,8 +98,9 @@ export default function HomePage() {
     }
     if (token) {
       fetchThreads();
+      fetchUnreadDMs();
     }
-  }, [loading, user, token, router, fetchThreads]);
+  }, [loading, user, token, router, fetchThreads, fetchUnreadDMs]);
 
   if (loading || !user) {
     return (
@@ -100,6 +117,17 @@ export default function HomePage() {
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
           <h1 className="text-lg font-bold tracking-tight">The Forum</h1>
           <div className="flex items-center gap-3">
+            <Link
+              href="/messages"
+              className="text-sm text-[var(--muted)] hover:text-[var(--foreground)] transition-colors relative"
+            >
+              Messages
+              {unreadDMs > 0 && (
+                <span className="absolute -top-1.5 -right-3 px-1 py-0.5 rounded-full text-[9px] font-bold bg-[var(--accent)] text-white min-w-[16px] text-center leading-none">
+                  {unreadDMs}
+                </span>
+              )}
+            </Link>
             <span className="text-sm text-[var(--muted)]">{user.name}</span>
             <button
               onClick={logout}

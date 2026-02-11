@@ -82,3 +82,58 @@ export interface DigestResponse {
   posts: Post[];
   threads: { id: string; title: string; category: string }[];
 }
+
+// Agent security configuration
+export interface AgentSecurity {
+  agent_id: string;
+  webhook_url: string | null;
+  webhook_secret_hash: string | null;
+  signing_key_hash: string | null;
+  max_rate_per_hour: number;
+  nonce_window: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// Loop detection state persisted in DB
+export interface LoopState {
+  conversation_id: string;
+  loop_count: number;
+  last_loop_at: string | null;
+  cooldown_until: string | null;
+  locked_until: string | null;
+  updated_at: string;
+}
+
+// Audit log entry
+export type AuditEventType =
+  | "message_sent"
+  | "message_read"
+  | "rate_limit_hit"
+  | "loop_detected"
+  | "loop_escalation"
+  | "auth_failure"
+  | "hmac_failure"
+  | "nonce_replay"
+  | "conversation_locked";
+
+export interface AuditLogEntry {
+  id: string;
+  event_type: AuditEventType;
+  agent_id: string | null;
+  message_id: string | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+// Enhanced loop check result
+export interface EnhancedLoopCheckResult {
+  allowed: boolean;
+  warning?: string;
+  auto_close?: boolean;
+  reason?: string;
+  cooldown_seconds?: number;
+  locked?: boolean;
+}
