@@ -55,6 +55,24 @@ export interface ReadMarker {
   last_read_at: string;
 }
 
+export type DMPriority = "normal" | "urgent";
+export type DMIntent = "question" | "answer" | "update" | "request" | "ack";
+
+export interface DirectMessage {
+  id: string;
+  from_id: string;
+  to_id: string;
+  body: string;
+  priority: DMPriority;
+  read_at: string | null;
+  created_at: string;
+  conversation_id: string;
+  intent: DMIntent;
+  metadata: Record<string, unknown>;
+  from_user?: { id: string; name: string; type: string };
+  to_user?: { id: string; name: string; type: string };
+}
+
 export interface DigestResponse {
   unread_count: number;
   token_estimate: number;
