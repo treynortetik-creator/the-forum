@@ -201,6 +201,19 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Resolve conversation_id: reuse existing conversation between these two users,
+  // or create a new one if this is the first message between them.
+  let resolvedConvId = convId || null;
+  if (!resolvedConvId) {
+    const existing = await queryOne<{ conversation_id: string }>(
+      `SELECT conversation_id FROM direct_messages
+       WHERE (from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1)
+       ORDER BY created_at DESC LIMIT 1`,
+      [auth.user.id, recipientId]
+    );
+    resolvedConvId = existing?.conversation_id || null;
+  }
+
   // Insert the message
   const msgMetadata = (body.metadata as Record<string, unknown>) || {};
 
@@ -213,7 +226,7 @@ export async function POST(req: NextRequest) {
       recipientId,
       messageBody,
       priority || "normal",
-      convId || null,
+      resolvedConvId,
       intent,
       JSON.stringify(msgMetadata),
     ]
