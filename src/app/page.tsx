@@ -66,7 +66,7 @@ export default function HomePage() {
       });
       if (res.ok) {
         const data = await res.json();
-        setThreads(data);
+        setThreads(data.threads ?? data);
       }
     } catch (err) {
       console.error("Failed to fetch threads:", err);
