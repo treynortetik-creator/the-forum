@@ -283,9 +283,18 @@ export async function GET(req: NextRequest) {
     limit = Math.min(Math.max(parseInt(limitParam) || 50, 1), 200);
   }
 
-  const conditions: string[] = ["(dm.to_id = $1 OR dm.from_id = $1)"];
-  const values: unknown[] = [auth.user.id];
-  let paramIdx = 2;
+  // Human users get admin visibility (can see all agent conversations)
+  const isAdmin = auth.user.type === "human";
+
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+  let paramIdx = 1;
+
+  if (!isAdmin) {
+    conditions.push(`(dm.to_id = $${paramIdx} OR dm.from_id = $${paramIdx})`);
+    values.push(auth.user.id);
+    paramIdx++;
+  }
 
   if (since) {
     conditions.push(`dm.created_at > $${paramIdx}`);
@@ -295,7 +304,11 @@ export async function GET(req: NextRequest) {
 
   if (unreadOnly) {
     conditions.push(`dm.read_at IS NULL`);
-    conditions.push(`dm.to_id = $1`);
+    if (!isAdmin) {
+      conditions.push(`dm.to_id = $${paramIdx}`);
+      values.push(auth.user.id);
+      paramIdx++;
+    }
   }
 
   if (conversationId) {
@@ -313,7 +326,7 @@ export async function GET(req: NextRequest) {
      FROM direct_messages dm
      JOIN users fu ON fu.id = dm.from_id
      JOIN users tu ON tu.id = dm.to_id
-     WHERE ${conditions.join(" AND ")}
+     ${conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""}
      ORDER BY dm.created_at DESC
      LIMIT $${paramIdx}`,
     values
