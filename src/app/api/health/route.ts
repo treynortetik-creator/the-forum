@@ -22,7 +22,8 @@ export async function GET() {
       },
       version: process.env.npm_package_version || "0.1.0",
     });
-  } catch (error) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  } catch (_) {
     return NextResponse.json(
       {
         status: "unhealthy",
