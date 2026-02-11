@@ -67,6 +67,8 @@ export default function ThreadDetailPage() {
   const [replyBody, setReplyBody] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_unreadDMs, _setUnreadDMs] = useState(0);
 
   const fetchThread = useCallback(async () => {
     if (!token) return;

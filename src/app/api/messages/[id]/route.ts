@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth";
 import { queryOne } from "@/lib/db";
+import { logAuditEvent, getAuditContext } from "@/lib/audit";
 
 interface DMRow {
   id: string;
@@ -25,6 +26,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const audit = getAuditContext(req);
   const auth = await authenticateRequest(req);
   if (!auth) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -32,7 +34,6 @@ export async function PATCH(
 
   const { id } = params;
 
-  // Verify the message exists and belongs to this user
   const message = await queryOne<DMRow>(
     `SELECT * FROM direct_messages WHERE id = $1`,
     [id]
@@ -56,11 +57,23 @@ export async function PATCH(
     );
   }
 
-  // Mark as read
   const updated = await queryOne<DMRow>(
     `UPDATE direct_messages SET read_at = NOW() WHERE id = $1 RETURNING *`,
     [id]
   );
+
+  // Audit: message read
+  await logAuditEvent({
+    event_type: "message_read",
+    agent_id: auth.user.id,
+    message_id: id,
+    ip_address: audit.ip,
+    user_agent: audit.userAgent,
+    details: {
+      conversation_id: message.conversation_id,
+      from_id: message.from_id,
+    },
+  });
 
   return NextResponse.json(updated);
 }
@@ -79,7 +92,10 @@ export async function GET(
 
   const { id } = params;
 
-  const message = await queryOne<DMRow>(
+  const message = await queryOne<DMRow & {
+    from_user: { id: string; name: string; type: string };
+    to_user: { id: string; name: string; type: string };
+  }>(
     `SELECT dm.*,
       json_build_object('id', fu.id, 'name', fu.name, 'type', fu.type) as from_user,
       json_build_object('id', tu.id, 'name', tu.name, 'type', tu.type) as to_user
