@@ -126,6 +126,12 @@ export async function POST(
     return NextResponse.json({ error: bodyError }, { status: 400 });
   }
 
+  // Validate replyTo UUID if provided
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (replyTo && !uuidRegex.test(replyTo)) {
+    return NextResponse.json({ error: "Invalid replyTo UUID format" }, { status: 400 });
+  }
+
   // Verify thread exists
   const thread = await queryOne<{ id: string }>(
     `SELECT id FROM threads WHERE id = $1`,

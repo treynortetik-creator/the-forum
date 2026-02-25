@@ -117,9 +117,10 @@ export async function PATCH(
     return NextResponse.json({ error: "Thread not found" }, { status: 404 });
   }
 
-  // Only thread author or agents can pin/unpin
-  if (thread.author_id !== auth.user.id && auth.user.type !== "agent") {
-    return NextResponse.json({ error: "Forbidden — only thread author or agents can modify threads" }, { status: 403 });
+  // Thread author, agents, or human admins can pin/unpin
+  const isAdmin = auth.user.type === "human";
+  if (thread.author_id !== auth.user.id && auth.user.type !== "agent" && !isAdmin) {
+    return NextResponse.json({ error: "Forbidden — only thread author, agents, or admins can modify threads" }, { status: 403 });
   }
 
   // Handle pin/unpin

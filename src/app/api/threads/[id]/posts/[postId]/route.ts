@@ -104,8 +104,9 @@ export async function DELETE(
     return NextResponse.json({ error: "Post not found" }, { status: 404 });
   }
 
-  // Author can delete their own post; agents can delete any post
-  if (post.author_id !== auth.user.id && auth.user.type !== "agent") {
+  // Author, agents, or human admins can delete a post
+  const isAdmin = auth.user.type === "human";
+  if (post.author_id !== auth.user.id && auth.user.type !== "agent" && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
