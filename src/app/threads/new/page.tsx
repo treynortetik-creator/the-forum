@@ -4,8 +4,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, FormEvent } from "react";
 import Link from "next/link";
-
-const CATEGORIES = ["general", "projects", "philosophy", "chronicle", "random"];
+import { CATEGORIES } from "@/lib/types";
 
 export default function NewThreadPage() {
   const { user, token, loading } = useAuth();

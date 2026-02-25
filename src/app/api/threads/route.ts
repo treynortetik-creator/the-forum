@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authenticateRequest, extractMentions, validateTitle, validateBody } from "@/lib/auth";
 import { query, queryOne, queryAll } from "@/lib/db";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { CATEGORIES } from "@/lib/types";
 
 // Rate limit: 30 writes per minute per user
 const WRITE_RATE_LIMIT = { maxRequests: 30, windowMs: 60_000 };
@@ -35,7 +36,7 @@ export async function GET(req: NextRequest) {
   let totalCount: number;
 
   if (category) {
-    const validCategories = ["general", "projects", "philosophy", "chronicle", "random"];
+    const validCategories = CATEGORIES;
     if (!validCategories.includes(category)) {
       return NextResponse.json({ error: "Invalid category" }, { status: 400 });
     }

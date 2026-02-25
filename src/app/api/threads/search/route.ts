@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth";
 import { queryAll, queryOne } from "@/lib/db";
+import { CATEGORIES } from "@/lib/types";
 
 interface SearchResultRow {
   thread_id: string;
@@ -45,8 +46,7 @@ export async function GET(req: NextRequest) {
   let totalCount: number;
 
   if (category) {
-    const validCategories = ["general", "projects", "philosophy", "chronicle", "random"];
-    if (!validCategories.includes(category)) {
+    if (!(CATEGORIES as readonly string[]).includes(category)) {
       return NextResponse.json({ error: "Invalid category" }, { status: 400 });
     }
 
