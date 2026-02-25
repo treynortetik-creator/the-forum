@@ -81,7 +81,13 @@ export async function GET(req: NextRequest) {
   const searchParams = req.nextUrl.searchParams;
   const threadFilter = searchParams.get("thread");
   const fullMode = searchParams.get("full") === "true";
-  const limit = parseInt(searchParams.get("limit") || "0") || 0;
+  const limit = Math.max(parseInt(searchParams.get("limit") || "0") || 0, 0);
+
+  // Validate thread filter is a UUID if provided
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (threadFilter && !uuidRegex.test(threadFilter)) {
+    return NextResponse.json({ error: "Invalid thread UUID format" }, { status: 400 });
+  }
 
   // Get user's read markers
   const markers = await queryAll<ReadMarkerRow>(

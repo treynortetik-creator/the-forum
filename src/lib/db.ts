@@ -10,6 +10,10 @@ export function getPool(): Pool {
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
   });
+  // Log pool errors so they don't become silent unhandled promise rejections
+  pool.on("error", (err) => {
+    console.error("Unexpected DB pool error:", err);
+  });
   return pool;
 }
 
