@@ -18,20 +18,6 @@ interface ThreadRow {
   author: { id: string; name: string; type: string; avatar_url: string | null };
 }
 
-interface PostCountRow {
-  thread_id: string;
-  count: string;
-}
-
-interface ReadMarkerRow {
-  thread_id: string;
-  last_read_at: string;
-}
-
-interface UnreadCountRow {
-  thread_id: string;
-  count: string;
-}
 
 // GET /api/threads — List all threads with author, post count, and unread count
 // Query params: category, limit (default 50, max 100), offset (default 0)
@@ -96,40 +82,56 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Get post counts
-  const postCounts = await queryAll<PostCountRow>(
-    `SELECT thread_id, COUNT(*) as count FROM posts WHERE thread_id = ANY($1) GROUP BY thread_id`,
-    [threadIds]
+  // Single CTE to get post counts, read markers, and unread counts in one query
+  interface ThreadStatsRow {
+    thread_id: string;
+    post_count: string;
+    last_read_at: string | null;
+    unread_count: string;
+  }
+  const statsRows = await queryAll<ThreadStatsRow>(
+    `WITH post_counts AS (
+       SELECT thread_id, COUNT(*) as post_count
+       FROM posts WHERE thread_id = ANY($1)
+       GROUP BY thread_id
+     ),
+     read_marks AS (
+       SELECT thread_id, last_read_at
+       FROM read_markers WHERE user_id = $2 AND thread_id = ANY($1)
+     ),
+     unread_counts AS (
+       SELECT p.thread_id, COUNT(*) as unread_count
+       FROM posts p
+       LEFT JOIN read_marks rm ON rm.thread_id = p.thread_id
+       WHERE p.thread_id = ANY($1)
+         AND (rm.last_read_at IS NULL OR p.created_at > rm.last_read_at)
+       GROUP BY p.thread_id
+     )
+     SELECT
+       t.id as thread_id,
+       COALESCE(pc.post_count, 0) as post_count,
+       rm.last_read_at,
+       COALESCE(uc.unread_count, 0) as unread_count
+     FROM unnest($1::uuid[]) AS t(id)
+     LEFT JOIN post_counts pc ON pc.thread_id = t.id
+     LEFT JOIN read_marks rm ON rm.thread_id = t.id
+     LEFT JOIN unread_counts uc ON uc.thread_id = t.id`,
+    [threadIds, auth.user.id]
   );
-  const countMap = new Map(postCounts.map((c) => [c.thread_id, parseInt(c.count)]));
 
-  // Get read markers for current user
-  const readMarkers = await queryAll<ReadMarkerRow>(
-    `SELECT thread_id, last_read_at FROM read_markers WHERE user_id = $1 AND thread_id = ANY($2)`,
-    [auth.user.id, threadIds]
-  );
-  const readMap = new Map(readMarkers.map((m) => [m.thread_id, m.last_read_at]));
+  const statsMap = new Map(statsRows.map((s) => [s.thread_id, s]));
 
-  // Get unread counts per thread
-  const unreadCounts = await queryAll<UnreadCountRow>(
-    `SELECT p.thread_id, COUNT(*) as count
-     FROM posts p
-     LEFT JOIN read_markers rm ON rm.thread_id = p.thread_id AND rm.user_id = $1
-     WHERE p.thread_id = ANY($2)
-       AND (rm.last_read_at IS NULL OR p.created_at > rm.last_read_at)
-     GROUP BY p.thread_id`,
-    [auth.user.id, threadIds]
-  );
-  const unreadMap = new Map(unreadCounts.map((u) => [u.thread_id, parseInt(u.count)]));
-
-  const enriched = threads.map((thread) => ({
-    ...thread,
-    post_count: countMap.get(thread.id) || 0,
-    unread_count: unreadMap.get(thread.id) || 0,
-    has_unread: readMap.has(thread.id)
-      ? new Date(thread.last_activity) > new Date(readMap.get(thread.id)!)
-      : true,
-  }));
+  const enriched = threads.map((thread) => {
+    const stats = statsMap.get(thread.id);
+    return {
+      ...thread,
+      post_count: parseInt(stats?.post_count || "0"),
+      unread_count: parseInt(stats?.unread_count || "0"),
+      has_unread: stats?.last_read_at
+        ? new Date(thread.last_activity) > new Date(stats.last_read_at)
+        : true,
+    };
+  });
 
   return NextResponse.json({
     threads: enriched,
