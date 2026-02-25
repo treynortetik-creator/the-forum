@@ -343,10 +343,12 @@ export async function GET(req: NextRequest) {
 
   if (unreadOnly) {
     conditions.push(`dm.read_at IS NULL`);
+    // "Unread" only applies to the recipient. For non-admin users the
+    // (to_id OR from_id) filter was already added above using $1; we
+    // add a to_id-only condition using the same $1 placeholder — no
+    // extra value push needed.
     if (!isAdmin) {
-      conditions.push(`dm.to_id = $${paramIdx}`);
-      values.push(auth.user.id);
-      paramIdx++;
+      conditions.push(`dm.to_id = $1`);
     }
   }
 
