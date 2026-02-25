@@ -312,10 +312,22 @@ export async function GET(req: NextRequest) {
   }
 
   const params = req.nextUrl.searchParams;
-  const since = params.get("since");
+  const sinceRaw = params.get("since");
   const limitParam = params.get("limit");
   const unreadOnly = params.get("unread_only") === "true";
   const conversationId = params.get("conversation_id");
+
+  // Validate since is a parseable ISO timestamp
+  const since = sinceRaw && !isNaN(Date.parse(sinceRaw)) ? sinceRaw : null;
+  if (sinceRaw && !since) {
+    return NextResponse.json({ error: "Invalid 'since' timestamp format" }, { status: 400 });
+  }
+
+  // Validate conversation_id is a UUID if provided
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (conversationId && !uuidRegex.test(conversationId)) {
+    return NextResponse.json({ error: "Invalid conversation_id format" }, { status: 400 });
+  }
 
   let limit = 50;
   if (limitParam) {
