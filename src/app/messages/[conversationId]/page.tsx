@@ -136,21 +136,22 @@ export default function ConversationPage() {
 
   const markMessagesRead = useCallback(async () => {
     if (!token || !user) return;
-    // Mark unread messages as read
-    const unread = messages.filter(
-      (m) => m.to_id === user.id && !m.read_at
-    );
-    for (const msg of unread) {
-      try {
-        await fetch(`/api/messages/${msg.id}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      } catch {
-        // Silently fail
-      }
+    const hasUnread = messages.some((m) => m.to_id === user.id && !m.read_at);
+    if (!hasUnread) return;
+    // Use bulk mark-read endpoint instead of N individual PATCHes
+    try {
+      await fetch("/api/messages/mark-read", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ conversation_id: conversationId }),
+      });
+    } catch {
+      // Silently fail
     }
-  }, [token, user, messages]);
+  }, [token, user, messages, conversationId]);
 
   const fetchAuditLogs = useCallback(async () => {
     if (!token || user?.type !== "human") return;

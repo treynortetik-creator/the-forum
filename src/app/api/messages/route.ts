@@ -92,6 +92,27 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (typeof to !== "string" || to.trim().length === 0) {
+    return NextResponse.json({ error: "Invalid recipient" }, { status: 400 });
+  }
+
+  if (typeof messageBody !== "string") {
+    return NextResponse.json({ error: "body must be a string" }, { status: 400 });
+  }
+
+  const trimmedBody = messageBody.trim();
+  if (trimmedBody.length === 0) {
+    return NextResponse.json({ error: "body cannot be empty" }, { status: 400 });
+  }
+
+  const MAX_DM_BODY = 10000;
+  if (trimmedBody.length > MAX_DM_BODY) {
+    return NextResponse.json(
+      { error: `body must be ${MAX_DM_BODY} characters or less` },
+      { status: 400 }
+    );
+  }
+
   if (!VALID_INTENTS.includes(intent)) {
     return NextResponse.json(
       { error: `Invalid intent. Must be one of: ${VALID_INTENTS.join(", ")}` },
@@ -106,9 +127,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Validate conversation_id is a UUID if provided
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (conversation_id && !uuidRegex.test(conversation_id)) {
+    return NextResponse.json({ error: "Invalid conversation_id format" }, { status: 400 });
+  }
+
   // Resolve recipient — accept UUID or name
   let recipientId = to;
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!uuidRegex.test(to)) {
     const user = await queryOne<{ id: string }>(
       `SELECT id FROM users WHERE LOWER(name) = LOWER($1)`,
@@ -224,7 +250,7 @@ export async function POST(req: NextRequest) {
     [
       auth.user.id,
       recipientId,
-      messageBody,
+      trimmedBody,
       priority || "normal",
       resolvedConvId,
       intent,
