@@ -24,13 +24,33 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { email, password } = await req.json();
+  let email: string, password: string;
+  try {
+    const body = await req.json();
+    email = body.email;
+    password = body.password;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
 
   if (!email || !password) {
     return NextResponse.json(
       { error: "email and password are required" },
       { status: 400 }
     );
+  }
+
+  if (typeof email !== "string" || typeof password !== "string") {
+    return NextResponse.json({ error: "email and password must be strings" }, { status: 400 });
+  }
+
+  // Basic email format check to avoid unnecessary DB queries
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
+  }
+
+  if (email.length > 254) {
+    return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
   }
 
   // Find user by email — only select needed columns
