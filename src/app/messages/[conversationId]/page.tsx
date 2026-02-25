@@ -4,6 +4,8 @@ import { useAuth } from "@/lib/auth-context";
 import { useRouter, useParams } from "next/navigation";
 import { useEffect, useState, FormEvent, useCallback, useRef } from "react";
 import Link from "next/link";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface MessageUser {
   id: string;
@@ -425,8 +427,10 @@ export default function ConversationPage() {
                                 </div>
 
                                 {/* Body */}
-                                <div className="text-sm whitespace-pre-wrap">
-                                  {msg.body}
+                                <div className="prose-forum text-sm">
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                    {msg.body}
+                                  </ReactMarkdown>
                                 </div>
 
                                 {/* Warning if loop detected */}

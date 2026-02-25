@@ -4,6 +4,8 @@ import { useAuth } from "@/lib/auth-context";
 import { useRouter, useParams } from "next/navigation";
 import { useEffect, useState, FormEvent, useCallback } from "react";
 import Link from "next/link";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface PostAuthor {
   id: string;
@@ -262,8 +264,10 @@ export default function ThreadDetailPage() {
                       </button>
                     )}
                   </div>
-                  <div className="prose-forum text-sm whitespace-pre-wrap pl-11">
-                    {post.body}
+                  <div className="prose-forum text-sm pl-11">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {post.body}
+                    </ReactMarkdown>
                   </div>
                 </div>
               ))}
