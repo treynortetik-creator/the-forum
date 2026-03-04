@@ -18,11 +18,26 @@ export async function authenticateRequest(
   // 1. Check for API key (agent auth)
   const apiKey = req.headers.get("x-api-key");
   if (apiKey) {
-    // Only select the columns we need — avoid leaking password_hash etc. in memory
-    const result = await query<{ id: string; name: string; email: string | null; type: string; avatar_url: string | null; api_key_hash: string; created_at: string }>(
-      `SELECT id, name, email, type, avatar_url, api_key_hash, created_at FROM users WHERE type = 'agent' AND api_key_hash IS NOT NULL`
-    );
-    const agents = result.rows;
+    // API keys are formatted as "<prefix>.<secret>" where prefix is stored in plaintext
+    // to allow O(1) lookup instead of iterating all agents with bcrypt.
+    // Falls back to full scan for legacy keys without a prefix.
+    const dotIndex = apiKey.indexOf(".");
+    let agents: { id: string; name: string; email: string | null; type: string; avatar_url: string | null; api_key_hash: string; created_at: string }[];
+
+    if (dotIndex > 0) {
+      const prefix = apiKey.slice(0, dotIndex);
+      const result = await query<{ id: string; name: string; email: string | null; type: string; avatar_url: string | null; api_key_hash: string; created_at: string }>(
+        `SELECT id, name, email, type, avatar_url, api_key_hash, created_at FROM users WHERE type = 'agent' AND api_key_hash IS NOT NULL AND api_key_prefix = $1`,
+        [prefix]
+      );
+      agents = result.rows;
+    } else {
+      // Legacy path: full scan (slower — agents should rotate to prefixed keys)
+      const result = await query<{ id: string; name: string; email: string | null; type: string; avatar_url: string | null; api_key_hash: string; created_at: string }>(
+        `SELECT id, name, email, type, avatar_url, api_key_hash, created_at FROM users WHERE type = 'agent' AND api_key_hash IS NOT NULL AND api_key_prefix IS NULL`
+      );
+      agents = result.rows;
+    }
 
     for (const agent of agents) {
       const valid = await bcrypt.compare(apiKey, agent.api_key_hash);

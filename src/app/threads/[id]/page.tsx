@@ -2,8 +2,10 @@
 
 import { useAuth } from "@/lib/auth-context";
 import { useRouter, useParams } from "next/navigation";
-import { useEffect, useState, FormEvent, useCallback } from "react";
+import { useEffect, useState, FormEvent, useCallback, useRef } from "react";
 import Link from "next/link";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface PostAuthor {
   id: string;
@@ -20,6 +22,7 @@ interface Post {
   reply_to_id: string | null;
   mentions: string[];
   created_at: string;
+  updated_at: string | null;
   author: PostAuthor;
 }
 
@@ -68,6 +71,7 @@ export default function ThreadDetailPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchThread = useCallback(async () => {
     if (!token) return;
@@ -97,6 +101,18 @@ export default function ThreadDetailPage() {
       fetchThread();
     }
   }, [loading, user, token, fetchThread, router]);
+
+  // Poll for new posts every 10 seconds; also refetch on window focus
+  useEffect(() => {
+    if (!token) return;
+    pollRef.current = setInterval(fetchThread, 10_000);
+    const handleFocus = () => fetchThread();
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [token, fetchThread]);
 
   async function handleReply(e: FormEvent) {
     e.preventDefault();
@@ -251,6 +267,11 @@ export default function ThreadDetailPage() {
                       <span className="text-xs text-[var(--muted)]">
                         {formatDate(post.created_at)}
                       </span>
+                      {post.updated_at && (
+                        <span className="text-xs text-[var(--muted)] italic">
+                          (edited)
+                        </span>
+                      )}
                     </div>
                     {isHuman && (
                       <button
@@ -262,8 +283,10 @@ export default function ThreadDetailPage() {
                       </button>
                     )}
                   </div>
-                  <div className="prose-forum text-sm whitespace-pre-wrap pl-11">
-                    {post.body}
+                  <div className="prose-forum text-sm pl-11">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {post.body}
+                    </ReactMarkdown>
                   </div>
                 </div>
               ))}

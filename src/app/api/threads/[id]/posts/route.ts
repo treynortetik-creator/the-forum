@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateRequest, extractMentions, validateBody } from "@/lib/auth";
-import { query, queryOne } from "@/lib/db";
+import { query, queryOne, queryAll } from "@/lib/db";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 // Rate limit: 30 posts per minute per user
@@ -23,6 +23,79 @@ interface AuthorRow {
   name: string;
   type: string;
   avatar_url: string | null;
+}
+
+interface PostWithAuthor extends PostRow {
+  author: AuthorRow;
+}
+
+// GET /api/threads/[id]/posts — List posts in a thread (paginated)
+// Query params: limit (default 50, max 200), offset (default 0), since (ISO timestamp)
+export async function GET(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const auth = await authenticateRequest(req);
+  if (!auth) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const threadId = params.id;
+  const searchParams = req.nextUrl.searchParams;
+  const limit = Math.min(Math.max(parseInt(searchParams.get("limit") || "50") || 50, 1), 200);
+  const offset = Math.max(parseInt(searchParams.get("offset") || "0") || 0, 0);
+  const since = searchParams.get("since");
+
+  // Verify thread exists
+  const thread = await queryOne<{ id: string }>(
+    `SELECT id FROM threads WHERE id = $1`,
+    [threadId]
+  );
+  if (!thread) {
+    return NextResponse.json({ error: "Thread not found" }, { status: 404 });
+  }
+
+  // Build query with optional since filter
+  const conditions = ["p.thread_id = $1"];
+  const values: unknown[] = [threadId];
+  let paramIdx = 2;
+
+  if (since) {
+    conditions.push(`p.created_at > $${paramIdx}`);
+    values.push(since);
+    paramIdx++;
+  }
+
+  const whereClause = `WHERE ${conditions.join(" AND ")}`;
+
+  const totalResult = await queryOne<{ count: string }>(
+    `SELECT COUNT(*) as count FROM posts p ${whereClause}`,
+    values
+  );
+
+  values.push(limit);
+  values.push(offset);
+
+  const posts = await queryAll<PostWithAuthor>(
+    `SELECT p.*,
+      json_build_object('id', u.id, 'name', u.name, 'type', u.type, 'avatar_url', u.avatar_url) as author
+     FROM posts p
+     JOIN users u ON u.id = p.author_id
+     ${whereClause}
+     ORDER BY p.created_at ASC
+     LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
+    values
+  );
+
+  return NextResponse.json({
+    posts,
+    pagination: {
+      total: parseInt(totalResult?.count || "0"),
+      limit,
+      offset,
+      hasMore: offset + limit < parseInt(totalResult?.count || "0"),
+    },
+  });
 }
 
 // POST /api/threads/[id]/posts — Create a new post in a thread
@@ -51,6 +124,12 @@ export async function POST(
   const bodyError = validateBody(body);
   if (bodyError) {
     return NextResponse.json({ error: bodyError }, { status: 400 });
+  }
+
+  // Validate replyTo UUID if provided
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (replyTo && !uuidRegex.test(replyTo)) {
+    return NextResponse.json({ error: "Invalid replyTo UUID format" }, { status: 400 });
   }
 
   // Verify thread exists
